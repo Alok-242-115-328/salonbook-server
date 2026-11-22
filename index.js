@@ -11,7 +11,7 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Models & Middleware (সবার আগে ইমপোর্ট করতে হবে)
+// Models & Middleware
 const User = require('./models/User');
 const Appointment = require('./models/Appointment');
 const Service = require('./models/Service');
@@ -21,10 +21,11 @@ const verifyAdmin = require('./middlewares/verifyAdmin');
 // Stripe Initialize
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
-// Middleware
+// 🚨 এখানে CORS ঠিক করা হয়েছে 🚨
 app.use(cors({
-  origin: 'http://localhost:3000',
-  credentials: true
+  origin: ["https://salonbook-ph09.netlify.app", "http://localhost:3000"],
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
 }));
 
 // ==========================================
@@ -70,42 +71,39 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, 
   res.json({ received: true });
 });
 
-// JSON Parser (Webhook এর পর)
+// JSON Parser
 app.use(express.json());
 
-// ==========================================
 // BASIC ROUTE
-// ==========================================
 app.get('/', (req, res) => {
   res.send('SalonBook Server is running!');
 });
 
 // ==========================================
-// PAYMENT CHECKOUT SESSION (সম্পূর্ণ ঠিক করা হলো)
+// PAYMENT CHECKOUT SESSION (লাইভ লিংক ঠিক করা হলো)
 // ==========================================
 app.post('/api/payment/create-checkout-session', async (req, res) => {
   try {
     const { appointmentId } = req.body;
 
-    // অ্যাপয়েন্টমেন্ট ডাটা বের করা
     const appointment = await Appointment.findById(appointmentId).populate('serviceId');
     if (!appointment) return res.status(404).json({ message: 'Appointment not found' });
 
-    // Stripe Checkout Session তৈরি করা
     const session = await stripe.checkout.sessions.create({
-      managed_payments: { enabled: false }, // 👈 Tax code এরর ফিক্স করার জন্য
+      managed_payments: { enabled: false },
       line_items: [{
         price_data: {
           currency: 'usd',
           product_data: { name: appointment.serviceId.serviceName },
-          unit_amount: appointment.servicePrice * 100, // সেন্টসে কনভার্ট
+          unit_amount: appointment.servicePrice * 100,
         },
         quantity: 1,
       }],
       mode: 'payment',
       metadata: { appointmentId: appointmentId },
-      success_url: `http://localhost:3000/payment/success?session_id={CHECKOUT_SESSION_ID}&appointment_id=${appointmentId}`,
-      cancel_url: `http://localhost:3000/payment/cancel`,
+      // 🚨 লাইভ লিংক বসানো হলো 🚨
+      success_url: `https://salonbook-ph09.netlify.app/payment/success?session_id={CHECKOUT_SESSION_ID}&appointment_id=${appointmentId}`,
+      cancel_url: `https://salonbook-ph09.netlify.app/payment/cancel`,
     });
 
     res.json({ success: true, url: session.url });
@@ -116,7 +114,7 @@ app.post('/api/payment/create-checkout-session', async (req, res) => {
 });
 
 // ==========================================
-// ADMIN ROUTES (Overview)
+// ADMIN ROUTES
 // ==========================================
 app.get('/api/admin/overview', verifyAdmin, async (req, res) => {
   try {
@@ -192,8 +190,6 @@ app.delete('/api/admin/services/:id', verifyAdmin, async (req, res) => {
   }
 });
 
-
-// সার্ভিস আপডেট করা (Edit)
 app.put('/api/admin/services/:id', verifyAdmin, async (req, res) => {
   try {
     const { serviceName, category, description, price, duration, image, status } = req.body;
@@ -204,13 +200,7 @@ app.put('/api/admin/services/:id', verifyAdmin, async (req, res) => {
     const updatedService = await Service.findByIdAndUpdate(
       req.params.id,
       { 
-        serviceName, 
-        category, 
-        description, 
-        price: Number(price), 
-        duration: Number(duration), 
-        image, 
-        status 
+        serviceName, category, description, price: Number(price), duration: Number(duration), image, status 
       },
       { new: true }
     );
@@ -223,26 +213,21 @@ app.put('/api/admin/services/:id', verifyAdmin, async (req, res) => {
   }
 });
 
-
 // ==========================================
-// // =========================================
-//ADMIN APPOINTMENTS ROUTES
+// ADMIN APPOINTMENTS ROUTES
 // ==========================================
 app.get('/api/admin/appointments', verifyAdmin, async (req, res) => {
   try {
     const appointments = await Appointment.find().sort({ createdAt: -1 });
     
-    // সার্ভিস এবং কাস্টমারের ডাটা ম্যানুয়ালি অ্যাটাচ করা হচ্ছে
     const populatedAppointments = await Promise.all(appointments.map(async (app) => {
       const appObj = app.toObject();
 
-      // ১. সার্ভিসের ডাটা আনা
       if (appObj.serviceId) {
         const service = await Service.findById(appObj.serviceId);
         appObj.serviceId = service;
       }
 
-      // ২. Better Auth এর 'user' কলেকশন থেকে কাস্টমারের ডাটা আনা
       if (appObj.customerId) {
         const customer = await mongoose.connection.db.collection('user').findOne(
           { _id: new mongoose.Types.ObjectId(appObj.customerId) }
@@ -261,7 +246,6 @@ app.get('/api/admin/appointments', verifyAdmin, async (req, res) => {
   }
 });
 
-// অ্যাপয়েন্টমেন্ট Confirm করা
 app.patch('/api/admin/appointments/:id/confirm', verifyAdmin, async (req, res) => {
   try {
     const appointment = await Appointment.findById(req.params.id);
@@ -275,7 +259,6 @@ app.patch('/api/admin/appointments/:id/confirm', verifyAdmin, async (req, res) =
   }
 });
 
-// অ্যাপয়েন্টমেন্ট Cancel করা
 app.patch('/api/admin/appointments/:id/cancel', verifyAdmin, async (req, res) => {
   try {
     const appointment = await Appointment.findById(req.params.id);
@@ -326,11 +309,9 @@ app.get('/api/admin/transactions', verifyAdmin, async (req, res) => {
   try {
     const transactions = await Transaction.find().sort({ createdAt: -1 });
 
-    // ম্যানুয়ালি কাস্টমার এবং সার্ভিসের ডাটা অ্যাটাচ করা
     const populatedTransactions = await Promise.all(transactions.map(async (txn) => {
       const txnObj = txn.toObject();
 
-      // ১. কাস্টমারের ডাটা আনা (Better Auth 'user' কলেকশন)
       if (txnObj.customerId) {
         const customer = await mongoose.connection.db.collection('user').findOne(
           { _id: new mongoose.Types.ObjectId(txnObj.customerId) }
@@ -340,7 +321,6 @@ app.get('/api/admin/transactions', verifyAdmin, async (req, res) => {
           : null;
       }
 
-      // ২. অ্যাপয়েন্টমেন্ট ও সার্ভিসের ডাটা আনা
       if (txnObj.appointmentId) {
         const appointment = await Appointment.findById(txnObj.appointmentId);
         if (appointment && appointment.serviceId) {
