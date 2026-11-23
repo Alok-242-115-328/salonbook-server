@@ -33,6 +33,34 @@ app.use(cors({
 // 🚨 Better Auth হ্যান্ডলার (express.json() এর আগে থাকতে হবে) 🚨
 app.all("/api/auth/*splat", toNodeHandler(auth));
 
+const confirmPaidSession = async (session) => {
+  const appointmentId = session.metadata?.appointmentId;
+  if (!appointmentId) return null;
+
+  const appointment = await Appointment.findById(appointmentId);
+  if (!appointment) return null;
+
+  appointment.paymentStatus = 'paid';
+  appointment.status = 'confirmed';
+  await appointment.save();
+
+  await Transaction.findOneAndUpdate(
+    { stripeSessionId: session.id },
+    {
+      $set: {
+        appointmentId: appointment._id,
+        customerId: appointment.customerId,
+        amount: (session.amount_total || appointment.servicePrice * 100) / 100,
+        currency: session.currency || 'usd',
+        status: 'paid',
+      },
+    },
+    { upsert: true, new: true }
+  );
+
+  return appointment;
+};
+
 // ==========================================
 // STRIPE WEBHOOK (express.json এর আগে থাকতে হবে)
 // ==========================================
@@ -48,28 +76,11 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, 
   }
 
   if (event.type === 'checkout.session.completed') {
-    const session = event.data.object;
-    const appointmentId = session.metadata.appointmentId;
-    
     try {
-      const appointment = await Appointment.findById(appointmentId);
-      if (appointment) {
-        appointment.paymentStatus = 'paid';
-        await appointment.save();
-
-        const transaction = new Transaction({
-          appointmentId: appointmentId,
-          customerId: appointment.customerId,
-          amount: session.amount_total / 100,
-          currency: session.currency,
-          stripeSessionId: session.id,
-          status: 'paid'
-        });
-        await transaction.save();
-        console.log("✅ Payment successful & DB updated!");
-      }
+      await confirmPaidSession(event.data.object);
+      console.log("✅ Payment successful & DB updated!");
     } catch (err) {
-      console.error("DB Update error:", err);
+      console.error("DB Update error:", err.message);
     }
   }
 
@@ -108,13 +119,35 @@ app.post('/api/payment/create-checkout-session', ensureNotBlocked, async (req, r
       }],
       mode: 'payment',
       metadata: { appointmentId: appointmentId },
-      success_url: `https://salonbook-ph09.netlify.app/payment/success?session_id={CHECKOUT_SESSION_ID}&appointment_id=${appointmentId}`,
-      cancel_url: `https://salonbook-ph09.netlify.app/payment/cancel`,
+      success_url: `${process.env.CLIENT_URL || 'https://salonbook-ph09.netlify.app'}/payment/success?session_id={CHECKOUT_SESSION_ID}&appointment_id=${appointmentId}`,
+      cancel_url: `${process.env.CLIENT_URL || 'https://salonbook-ph09.netlify.app'}/payment/success/cancel`,
     });
 
     res.json({ success: true, url: session.url });
   } catch (error) {
     console.error("Stripe Error:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+app.get('/api/payment/status', ensureNotBlocked, async (req, res) => {
+  try {
+    const { session_id, appointment_id } = req.query;
+    if (!session_id) return res.status(400).json({ success: false, message: 'Missing session_id' });
+
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+    if (session.payment_status !== 'paid') {
+      return res.json({ success: true, paid: false });
+    }
+
+    if (appointment_id && session.metadata?.appointmentId !== appointment_id) {
+      return res.status(403).json({ success: false, message: 'Invalid appointment' });
+    }
+
+    const appointment = await confirmPaidSession(session);
+    res.json({ success: true, paid: true, appointmentId: appointment?._id || appointment_id });
+  } catch (error) {
+    console.error("Payment status error:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
