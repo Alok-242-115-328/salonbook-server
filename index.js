@@ -8,25 +8,30 @@ const mongoose = require('mongoose');
 
 dotenv.config();
 
-const app = express();
-const port = process.env.PORT || 5000;
+const { toNodeHandler } = require("better-auth/node");
+const { auth } = require("./lib/auth");
 
-// Models & Middleware
 const User = require('./models/User');
 const Appointment = require('./models/Appointment');
 const Service = require('./models/Service');
 const Transaction = require('./models/Transaction');
 const verifyAdmin = require('./middlewares/verifyAdmin');
-
-// Stripe Initialize
+const ensureNotBlocked = require('./middlewares/ensureNotBlocked');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
-// 🚨 এখানে CORS ঠিক করা হয়েছে 🚨
+const app = express();
+const port = process.env.PORT || 5000;
+
+// CORS ঠিক করা হলো
 app.use(cors({
-  origin: ["https://salonbook-ph09.netlify.app", "http://localhost:3000"],
+  origin: [process.env.CORS_ORIGIN, "https://salonbook-ph09.netlify.app", "http://localhost:3000"].filter(Boolean),
   credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
+
+// 🚨 Better Auth হ্যান্ডলার (express.json() এর আগে থাকতে হবে) 🚨
+app.all("/api/auth/*splat", toNodeHandler(auth));
 
 // ==========================================
 // STRIPE WEBHOOK (express.json এর আগে থাকতে হবে)
@@ -71,7 +76,7 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, 
   res.json({ received: true });
 });
 
-// JSON Parser
+// JSON Parser (Better Auth এবং Webhook এর পর)
 app.use(express.json());
 
 // BASIC ROUTE
@@ -79,13 +84,15 @@ app.get('/', (req, res) => {
   res.send('SalonBook Server is running!');
 });
 
+// ... বাকি সব রাউট (Admin, Services, Appointments, Transactions) আগের মতোই থাকবে ...
+// (আমি নিচে সেগুলো আবার লিখে দিচ্ছি যাতে তুমি কপি-পেস্ট করতে পারো)
+
 // ==========================================
-// PAYMENT CHECKOUT SESSION (লাইভ লিংক ঠিক করা হলো)
+// PAYMENT CHECKOUT SESSION
 // ==========================================
-app.post('/api/payment/create-checkout-session', async (req, res) => {
+app.post('/api/payment/create-checkout-session', ensureNotBlocked, async (req, res) => {
   try {
     const { appointmentId } = req.body;
-
     const appointment = await Appointment.findById(appointmentId).populate('serviceId');
     if (!appointment) return res.status(404).json({ message: 'Appointment not found' });
 
@@ -101,7 +108,6 @@ app.post('/api/payment/create-checkout-session', async (req, res) => {
       }],
       mode: 'payment',
       metadata: { appointmentId: appointmentId },
-      // 🚨 লাইভ লিংক বসানো হলো 🚨
       success_url: `https://salonbook-ph09.netlify.app/payment/success?session_id={CHECKOUT_SESSION_ID}&appointment_id=${appointmentId}`,
       cancel_url: `https://salonbook-ph09.netlify.app/payment/cancel`,
     });
@@ -344,7 +350,7 @@ app.get('/api/admin/transactions', verifyAdmin, async (req, res) => {
 // ==========================================
 // PROFILE ROUTE
 // ==========================================
-app.patch('/api/profile', async (req, res) => {
+app.patch('/api/profile', ensureNotBlocked, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -384,7 +390,7 @@ app.get('/api/user/status', async (req, res) => {
 // ==========================================
 // CUSTOMER APPOINTMENTS ROUTES
 // ==========================================
-app.get('/api/customer/appointments', async (req, res) => {
+app.get('/api/customer/appointments', ensureNotBlocked, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ message: 'Unauthorized' });
@@ -403,7 +409,7 @@ app.get('/api/customer/appointments', async (req, res) => {
   }
 });
 
-app.post('/api/customer/appointments', async (req, res) => {
+app.post('/api/customer/appointments', ensureNotBlocked, async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ message: 'Unauthorized' });
@@ -442,7 +448,7 @@ app.post('/api/customer/appointments', async (req, res) => {
   }
 });
 
-app.patch('/api/customer/appointments/:id/cancel', async (req, res) => {
+app.patch('/api/customer/appointments/:id/cancel', ensureNotBlocked, async (req, res) => {
   try {
     const appointment = await Appointment.findById(req.params.id);
     if (!appointment) return res.status(404).json({ message: 'Not found' });

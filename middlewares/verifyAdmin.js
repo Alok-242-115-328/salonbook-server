@@ -22,6 +22,15 @@ const verifyAdmin = async (req, res, next) => {
       return res.status(403).json({ message: 'Forbidden: You are not an admin' });
     }
 
+    if (user.isBlocked) {
+      return res.status(403).json({
+        success: false,
+        code: 'ACCOUNT_BLOCKED',
+        isBlocked: true,
+        message: 'Your account has been blocked. Please contact support.',
+      });
+    }
+
     next();
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
