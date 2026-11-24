@@ -35,11 +35,25 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+  allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Forwarded-Host", "X-Forwarded-Proto"],
   exposedHeaders: ["Set-Cookie"],
 };
 
 app.use(cors(corsOptions));
+
+app.use((req, res, next) => {
+  try {
+    const origin = req.headers.origin;
+    if (origin) {
+      const url = new URL(origin);
+      if (url.protocol === "https:") {
+        req.headers["x-forwarded-host"] = url.host;
+        req.headers["x-forwarded-proto"] = "https";
+      }
+    }
+  } catch {}
+  next();
+});
 
 // 🚨 Better Auth হ্যান্ডলার (express.json() এর আগে থাকতে হবে) 🚨
 app.all("/api/auth/*splat", toNodeHandler(auth));
@@ -104,6 +118,10 @@ app.use(express.json());
 // BASIC ROUTE
 app.get('/', (req, res) => {
   res.send('SalonBook Server is running!');
+});
+
+app.all(['/api/admin/sign-up', '/api/admin/signup'], (req, res) => {
+  res.status(403).json({ message: 'Admin signup is disabled. Contact the super admin.' });
 });
 
 // ... বাকি সব রাউট (Admin, Services, Appointments, Transactions) আগের মতোই থাকবে ...
