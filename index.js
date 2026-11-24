@@ -22,13 +22,24 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const app = express();
 const port = process.env.PORT || 5000;
 
-// CORS ঠিক করা হলো
-app.use(cors({
-  origin: [process.env.CORS_ORIGIN, "https://salonbook-ph09.netlify.app", "http://localhost:3000"].filter(Boolean),
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  const allowed = [process.env.CORS_ORIGIN, "https://salonbook-ph09.netlify.app"].filter(Boolean);
+  return allowed.includes(origin) || /^https:\/\/[a-z0-9-]+--salonbook-ph09\.netlify\.app$/i.test(origin);
+};
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (isAllowedOrigin(origin)) return callback(null, true);
+    callback(new Error("Not allowed by CORS"));
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
+  allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+  exposedHeaders: ["Set-Cookie"],
+};
+
+app.use(cors(corsOptions));
 
 // 🚨 Better Auth হ্যান্ডলার (express.json() এর আগে থাকতে হবে) 🚨
 app.all("/api/auth/*splat", toNodeHandler(auth));
